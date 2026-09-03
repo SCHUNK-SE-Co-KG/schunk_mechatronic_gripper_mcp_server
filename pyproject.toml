@@ -1,0 +1,17 @@
+[project]
+name = "schunk-gripper-mcp-server"
+version = "1.0.0"
+description = "MCP Server for controlling Schunk mechatronic grippers via ROS 2"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+    "mcp[cli]>=1.0.0",
+]
+
+[project.scripts]
+schunk-gripper-mcp-server = "schunk_gripper_mcp_server.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

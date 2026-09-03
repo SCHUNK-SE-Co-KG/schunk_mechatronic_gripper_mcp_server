@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "schunk-gripper": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "source /opt/ros/jazzy/setup.bash && source /home/jbeil/ros2_ws/install/setup.bash && /home/jbeil/ros2_ws/ros2_gripper_mcp_server/.venv/bin/schunk-gripper-mcp-server"
+      ]
+    }
+  }
+}
