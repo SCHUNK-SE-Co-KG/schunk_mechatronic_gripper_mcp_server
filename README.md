@@ -1,4 +1,4 @@
-# schunk_mechatronic_gripper_mcp_server
+# SCHUNK Mechatronic Gripper MCP Server
 MCP Server to control SCHUNK EGU, EGK and EZU grippers
 
 ## Prerequisites
