@@ -14,14 +14,28 @@
 # this program. If not, see <https://www.gnu.org/licenses/>.
 # --------------------------------------------------------------------------------
 
+import json
+import logging
+import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import TextResourceContents
-from schunk_gripper_mcp_server.ros_bridge import RosBridge
+
+if TYPE_CHECKING:
+    from schunk_gripper_mcp_server.ethernet_bridge import EthernetBridge
+    from schunk_gripper_mcp_server.ros_bridge import RosBridge
+
+logger = logging.getLogger(__name__)
 
 INSTRUCTIONS = """\
-You are controlling SCHUNK EGU / EGK / EZU mechatronic grippers through a ROS 2 driver.
+You are controlling SCHUNK EGU / EGK / EZU mechatronic grippers, either through a ROS 2 driver or,
+if no ROS 2 driver is running, directly over Ethernet (HTTP/JSON). The server picks the mode on the
+first tool call; `get_connection_mode` reports it. Both modes offer the same tools.
+In Ethernet mode, Modbus RTU grippers are not supported and there is no lifecycle: `add_gripper`
+connects a gripper immediately and all tools work at any time (the lifecycle tools remain as
+compatibility helpers and the "Only available in ... state" notes apply to ROS 2 mode only).
 
 Gripper variants:
 - EGU: 2-finger parallel gripper, strong-grip
@@ -138,14 +152,60 @@ def get_gripper_documentation() -> TextResourceContents:
         )
 
 
-bridge: RosBridge | None = None
+bridge: "RosBridge | EthernetBridge | None" = None
+connection_mode: dict[str, str] = {}
+_bridge_lock = threading.Lock()
+
+# DDS discovery can take a moment, so a running driver may not be visible immediately.
+ROS_DETECTION_TIMEOUT_SEC = 3.0
 
 
-def get_bridge() -> RosBridge:
+def _select_backend() -> tuple["RosBridge | EthernetBridge", str, str]:
+    """Use the ROS 2 driver if it is running, otherwise talk to grippers over Ethernet."""
+    try:
+        import rclpy
+        from schunk_gripper_mcp_server import ros_bridge
+    except ImportError as e:
+        reason = f"ROS 2 Python packages are not available ({e})"
+    else:
+        if ros_bridge.is_driver_available(ROS_DETECTION_TIMEOUT_SEC):
+            return ros_bridge.RosBridge(), "ros2", f"ROS 2 driver found at {ros_bridge.DRIVER_NODE}"
+        rclpy.try_shutdown()
+        reason = f"No ROS 2 driver found at {ros_bridge.DRIVER_NODE}"
+
+    from schunk_gripper_mcp_server.ethernet_bridge import EthernetBridge
+
+    return EthernetBridge(), "ethernet", reason
+
+
+def get_bridge() -> "RosBridge | EthernetBridge":
     global bridge
-    if bridge is None:
-        bridge = RosBridge()
+    with _bridge_lock:
+        if bridge is None:
+            bridge, mode, reason = _select_backend()
+            connection_mode.update(mode=mode, reason=reason)
+            logger.info(f"Connection mode: {mode} ({reason})")
     return bridge
+
+
+@mcp.tool()
+async def get_connection_mode() -> str:
+    """Report how the server talks to the grippers.
+
+    Returns 'ros2' (through the running ROS 2 driver at /schunk/driver) or
+    'ethernet' (directly over HTTP/JSON, no ROS 2 driver needed), plus the reason.
+    The mode is chosen once, on the first tool call.
+
+    In ethernet mode there are no lifecycle states: add_gripper (or
+    load_previous_configuration) connects a gripper immediately, and all setup,
+    info and control tools work at any time. The lifecycle tools still exist so
+    the same calls work in both modes: configure_driver reconnects grippers,
+    activate_driver acknowledges them, deactivate_driver does nothing, and
+    cleanup_driver / shutdown_driver disconnect them. The "Only available in
+    ... state" notes in the tool descriptions apply to ros2 mode only.
+    """
+    get_bridge()
+    return json.dumps(connection_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -287,24 +347,47 @@ async def reset_grippers() -> str:
 
 
 @mcp.tool()
-async def save_configuration() -> str:
+async def save_configuration(location: str = "") -> str:
     """Save the current gripper configuration to disk.
 
-    The configuration is persisted at /var/tmp/schunk_gripper/configuration.json
-    and will be available for load_previous_configuration on the next start.
+    In Ethernet mode, location is an optional file path. The default is
+    configuration.json beside the MCP server. A custom path is remembered and
+    used by load_previous_configuration on later server starts. ROS mode uses
+    the ROS driver's own configuration location; location is not supported there.
+
+    Args:
+        location: Optional path for the Ethernet configuration JSON file.
+
     Only available in UNCONFIGURED state.
     """
-    return get_bridge().save_configuration()
+    backend = get_bridge()
+    if connection_mode["mode"] == "ethernet":
+        return backend.save_configuration(location)
+    if location:
+        return json.dumps({"error": "A custom configuration location is only supported in Ethernet mode."})
+    return backend.save_configuration()
 
 
 @mcp.tool()
-async def load_previous_configuration() -> str:
+async def load_previous_configuration(location: str = "") -> str:
     """Load a previously saved gripper configuration from disk.
 
-    Restores grippers from /var/tmp/schunk_gripper/configuration.json.
+    In Ethernet mode, location is optional. If omitted, loads the path saved
+    most recently by save_configuration, or configuration.json beside the MCP
+    server if no custom path has been saved. ROS mode loads the ROS driver's
+    own configuration and does not accept location.
+
+    Args:
+        location: Optional Ethernet configuration JSON file to load once.
+
     Only available in UNCONFIGURED state.
     """
-    return get_bridge().load_previous_configuration()
+    backend = get_bridge()
+    if connection_mode["mode"] == "ethernet":
+        return backend.load_previous_configuration(location)
+    if location:
+        return json.dumps({"error": "A custom configuration location is only supported in Ethernet mode."})
+    return backend.load_previous_configuration()
 
 
 # ---------------------------------------------------------------------------
@@ -542,13 +625,10 @@ async def soft_reset(gripper_id: str) -> str:
 async def brake_test(gripper_id: str) -> str:
     """Run a brake test on a gripper.
 
-    Calls the gripper-specific ROS Trigger service at
-    /schunk/driver/<gripper_id>/brake_test.
-
     Args:
         gripper_id: The gripper to test (from list_grippers).
 
-    Only available in ACTIVE state and only on grippers that expose brake_test.
+    Only available in ACTIVE state and only on grippers with GPE (M modules).
     """
     return get_bridge().brake_test(gripper_id=gripper_id)
 
