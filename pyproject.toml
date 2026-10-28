@@ -1,13 +1,19 @@
 [project]
 name = "schunk-gripper-mcp-server"
 version = "1.0.0"
-description = "MCP Server for controlling Schunk mechatronic grippers via ROS 2"
+description = "MCP Server for controlling Schunk mechatronic grippers via ROS 2 or Ethernet"
 requires-python = ">=3.12"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
     "mcp[cli]>=1.0.0",
+    "schunk_gripper_library @ git+https://github.com/SCHUNK-SE-Co-KG/schunk_mechatronic_gripper.git@v3.1.0#subdirectory=schunk_gripper_library",
+    # schunk_gripper_library.utility imports pytest at runtime without declaring it.
+    "pytest",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.scripts]
 schunk-gripper-mcp-server = "schunk_gripper_mcp_server.server:main"
