@@ -34,6 +34,7 @@ from schunk_gripper_mcp_server.common import (
     STATUS_BITS,
     decode_float_payload,
     format_gripper_status,
+    gpe_request_error,
     validate_motion,
 )
 
@@ -93,8 +94,11 @@ class EthernetBridge:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _active_driver(self, gripper_id: str) -> tuple[Driver | None, str | None]:
-        """Return the driver of a connected gripper, or an error message."""
+    def _active_driver(self, gripper_id: str, use_gpe: bool = False) -> tuple[Driver | None, str | None]:
+        """Return the driver of a connected gripper, or an error message.
+
+        With use_gpe=True, also reject the command if the gripper has no GPE.
+        """
         for gripper in self._grippers:
             if gripper.gripper_id == gripper_id:
                 if not gripper.driver.connected:
@@ -103,6 +107,8 @@ class EthernetBridge:
                     else:
                         hint = "It was disconnected explicitly. Use configure_driver to reconnect it."
                     return None, _error(f"Gripper '{gripper_id}' is not connected. {hint}")
+                if gpe_error := gpe_request_error(gripper_id, use_gpe, gripper.driver.gpe_available()):
+                    return None, _result(False, gpe_error)
                 return gripper.driver, None
         return None, _error(f"Unknown gripper '{gripper_id}'. Use list_grippers.")
 
@@ -217,18 +223,25 @@ class EthernetBridge:
 
     def _activate(self, transition: str) -> str:
         """Acknowledge all connected grippers. Not required before using control tools."""
-        acknowledged = []
+        acknowledged, disconnected = [], []
         for gripper in self._grippers:
             if not gripper.driver.connected:
+                disconnected.append(gripper.gripper_id)
                 continue
             try:
                 gripper.driver.acknowledge()
                 acknowledged.append(gripper.gripper_id)
             except Exception as e:
                 logger.error(f"Acknowledge failed for '{gripper.gripper_id}': {e}")
+        extra = {"disconnected_grippers": disconnected} if disconnected else {}
+        not_connected = f" Not connected: {', '.join(disconnected)}." if disconnected else ""
         if not acknowledged:
-            return self._transition_result(transition, False, "No connected gripper to acknowledge.")
-        return self._transition_result(transition, True, f"Acknowledged: {', '.join(acknowledged)}.")
+            return self._transition_result(
+                transition, False, f"No connected gripper to acknowledge.{not_connected}", **extra
+            )
+        return self._transition_result(
+            transition, True, f"Acknowledged: {', '.join(acknowledged)}.{not_connected}", **extra
+        )
 
     def _deactivate(self, transition: str) -> str:
         return self._transition_result(
@@ -363,7 +376,7 @@ class EthernetBridge:
     # ------------------------------------------------------------------
 
     def _move(self, gripper_id: str, position: float, velocity: float, use_gpe: bool, is_absolute: bool) -> str:
-        driver, error = self._active_driver(gripper_id)
+        driver, error = self._active_driver(gripper_id, use_gpe=use_gpe)
         if error:
             return error
         if message := validate_motion(
@@ -392,7 +405,7 @@ class EthernetBridge:
         velocity: float | None,
         use_gpe: bool,
     ) -> str:
-        driver, error = self._active_driver(gripper_id)
+        driver, error = self._active_driver(gripper_id, use_gpe=use_gpe)
         if error:
             return error
         if message := validate_motion(
@@ -402,8 +415,6 @@ class EthernetBridge:
             return _result(False, message)
         if velocity is not None and driver.get_variant() != "EGK":
             return _result(False, f"Gripper '{gripper_id}' does not support a gripping velocity (EGK SoftGrip only).")
-        # StrongGrip always engages GPE, and Driver.grip() waits for status bit 31 == use_gpe.
-        use_gpe = driver.gpe_available() and (use_gpe or force > 100)
         try:
             result = driver.grip(
                 force=force,
@@ -424,15 +435,19 @@ class EthernetBridge:
         })
 
     def release(self, gripper_id: str, use_gpe: bool) -> str:
-        driver, error = self._active_driver(gripper_id)
+        driver, error = self._active_driver(gripper_id, use_gpe=use_gpe)
         return error or self._command(driver, driver.release, use_gpe=use_gpe)
+
+    def release_for_manual_movement(self, gripper_id: str) -> str:
+        driver, error = self._active_driver(gripper_id)
+        return error or self._command(driver, driver.release_for_manual_movement)
 
     def acknowledge(self, gripper_id: str) -> str:
         driver, error = self._active_driver(gripper_id)
         return error or self._command(driver, driver.acknowledge)
 
     def stop(self, gripper_id: str, use_gpe: bool) -> str:
-        driver, error = self._active_driver(gripper_id)
+        driver, error = self._active_driver(gripper_id, use_gpe=use_gpe)
         return error or self._command(driver, driver.stop, use_gpe=use_gpe)
 
     def fast_stop(self, gripper_id: str) -> str:
@@ -440,7 +455,7 @@ class EthernetBridge:
         return error or self._command(driver, driver.fast_stop)
 
     def start_jogging(self, gripper_id: str, velocity: float, use_gpe: bool) -> str:
-        driver, error = self._active_driver(gripper_id)
+        driver, error = self._active_driver(gripper_id, use_gpe=use_gpe)
         if error:
             return error
         if message := validate_motion(gripper_id, _limits_reader(driver), velocity=abs(velocity)):

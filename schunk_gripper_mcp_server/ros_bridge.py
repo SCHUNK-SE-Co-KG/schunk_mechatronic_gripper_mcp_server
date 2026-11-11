@@ -62,6 +62,7 @@ from schunk_gripper_mcp_server.common import (
     STATUS_BITS,
     decode_float_payload,
     format_gripper_status,
+    gpe_request_error,
     has_gpe,
     validate_motion,
 )
@@ -132,6 +133,7 @@ class RosBridge:
         self._gripper_states: dict[str, GripperState] = {}
         self._joint_states: dict[str, JointState] = {}
         self._connection_state: ConnectionState | None = None
+        self._connection_state_received_at = 0.0
 
         # Topic subscribers (created lazily)
         self._subscriptions_created = False
@@ -188,6 +190,7 @@ class RosBridge:
 
     def _connection_state_cb(self, msg: ConnectionState):
         self._connection_state = msg
+        self._connection_state_received_at = time.monotonic()
         # Dynamically subscribe to per-gripper topics
         for gripper_id in msg.grippers:
             if gripper_id not in self._gripper_states:
@@ -250,12 +253,33 @@ class RosBridge:
                     })
         req = ChangeState.Request()
         req.transition.id = TRANSITIONS[transition]
+        requested_at = time.monotonic()
         resp = self._call_service(self._change_state_client, req)
         if resp is None:
             return json.dumps({"error": "Driver node not reachable. Is the driver running?"})
-        if resp.success:
-            return json.dumps({"success": True, "transition": transition})
-        return json.dumps({"success": False, "transition": transition})
+        if not resp.success:
+            return json.dumps({"success": False, "transition": transition})
+        result = {"success": True, "transition": transition}
+        if transition in ("configure", "activate"):
+            disconnected = self._disconnected_grippers(since=requested_at)
+            if disconnected:
+                result["disconnected_grippers"] = disconnected
+                result["message"] = (
+                    f"Not connected yet: {', '.join(disconnected)}. The driver connects them automatically "
+                    "once they are reachable (e.g. powered on); check get_connection_state."
+                )
+        return json.dumps(result)
+
+    def _disconnected_grippers(self, since: float, timeout: float = 1.0) -> list[str] | None:
+        """Grippers reported as disconnected by a connection_state message received after `since`."""
+        self._ensure_subscriptions()
+        deadline = time.monotonic() + timeout
+        while self._connection_state_received_at < since and time.monotonic() < deadline:
+            time.sleep(0.02)
+        msg = self._connection_state
+        if msg is None or self._connection_state_received_at < since:
+            return None
+        return [gripper_id for gripper_id, connected in zip(msg.grippers, msg.connected) if not connected]
 
     @staticmethod
     def _lifecycle_request(transition: str) -> ChangeState.Request:
@@ -424,6 +448,8 @@ class RosBridge:
         
         # Determine service type based on gripper's actual GPE capability, not the parameter
         gripper_has_gpe = self._has_gpe(gripper_id)
+        if gpe_error := gpe_request_error(gripper_id, use_gpe, gripper_has_gpe):
+            return json.dumps({"success": False, "message": gpe_error})
         
         if gripper_has_gpe:
             client = self._node.create_client(
@@ -457,6 +483,8 @@ class RosBridge:
         
         # Determine service type based on gripper's actual GPE capability, not the parameter
         gripper_has_gpe = self._has_gpe(gripper_id)
+        if gpe_error := gpe_request_error(gripper_id, use_gpe, gripper_has_gpe):
+            return json.dumps({"success": False, "message": gpe_error})
         
         if gripper_has_gpe:
             client = self._node.create_client(
@@ -522,6 +550,8 @@ class RosBridge:
             return json.dumps({"error": f"Unsupported grip service type '{service_type}' for gripper '{gripper_id}'."})
 
         request_class, service_has_gpe, service_has_velocity = request_info
+        if gpe_error := gpe_request_error(gripper_id, use_gpe, service_has_gpe):
+            return json.dumps({"success": False, "message": gpe_error})
         if velocity is not None and not service_has_velocity:
             return json.dumps({
                 "success": False,
@@ -556,6 +586,8 @@ class RosBridge:
         srv_name = f"{DRIVER_NODE}/{gripper_id}/release"
         # Determine service type based on gripper's actual GPE capability, not the parameter
         gripper_has_gpe = self._has_gpe(gripper_id)
+        if gpe_error := gpe_request_error(gripper_id, use_gpe, gripper_has_gpe):
+            return json.dumps({"success": False, "message": gpe_error})
         
         if gripper_has_gpe:
             client = self._node.create_client(ReleaseWithGPE, srv_name)
@@ -568,6 +600,18 @@ class RosBridge:
         self._node.destroy_client(client)
         if resp is None:
             return json.dumps({"error": f"Release service not available for gripper '{gripper_id}'. Is the driver ACTIVE?"})
+        return json.dumps({"success": resp.success, "message": resp.message})
+
+    def release_for_manual_movement(self, gripper_id: str) -> str:
+        client = self._node.create_client(
+            Trigger,
+            f"{DRIVER_NODE}/{gripper_id}/release_for_manual_movement",
+        )
+        req = Trigger.Request()
+        resp = self._call_service(client, req)
+        self._node.destroy_client(client)
+        if resp is None:
+            return json.dumps({"error": f"Manual movement release service not available for gripper '{gripper_id}'. Is the driver ACTIVE?"})
         return json.dumps({"success": resp.success, "message": resp.message})
 
     def acknowledge(self, gripper_id: str) -> str:
@@ -583,6 +627,8 @@ class RosBridge:
         srv_name = f"{DRIVER_NODE}/{gripper_id}/stop"
         # Determine service type based on gripper's actual GPE capability, not the parameter
         gripper_has_gpe = self._has_gpe(gripper_id)
+        if gpe_error := gpe_request_error(gripper_id, use_gpe, gripper_has_gpe):
+            return json.dumps({"success": False, "message": gpe_error})
         
         if gripper_has_gpe:
             client = self._node.create_client(StopWithGPE, srv_name)
@@ -613,6 +659,8 @@ class RosBridge:
         srv_name = f"{DRIVER_NODE}/{gripper_id}/start_jogging"
         # Determine service type based on gripper's actual GPE capability, not the parameter
         gripper_has_gpe = self._has_gpe(gripper_id)
+        if gpe_error := gpe_request_error(gripper_id, use_gpe, gripper_has_gpe):
+            return json.dumps({"success": False, "message": gpe_error})
         
         if gripper_has_gpe:
             client = self._node.create_client(StartJoggingGPE, srv_name)

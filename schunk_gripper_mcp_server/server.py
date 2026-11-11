@@ -531,6 +531,21 @@ async def release(gripper_id: str, use_gpe: bool = False) -> str:
 
 
 @mcp.tool()
+async def release_for_manual_movement(gripper_id: str) -> str:
+    """Release the gripper for manual movement.
+
+    The gripper firmware only permits this command in an error state. It releases
+    the brake so the fingers can be moved manually.
+
+    Args:
+        gripper_id: The gripper to release (from list_grippers).
+
+    Only available in ACTIVE state when using the ROS 2 driver.
+    """
+    return get_bridge().release_for_manual_movement(gripper_id=gripper_id)
+
+
+@mcp.tool()
 async def acknowledge(gripper_id: str) -> str:
     """Acknowledge gripper errors. Call this to clear error states.
 

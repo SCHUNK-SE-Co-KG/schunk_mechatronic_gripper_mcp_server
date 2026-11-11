@@ -205,6 +205,16 @@ def has_gpe(gripper_id: str) -> bool:
     return "_M_" in gripper_id
 
 
+def gpe_request_error(gripper_id: str, use_gpe: bool, gpe_available: bool) -> str | None:
+    """Reject use_gpe on modules without GPE, as the gripper itself would (0x28)."""
+    if use_gpe and not gpe_available:
+        return (
+            f"Gripper '{gripper_id}' has no GPE (N module), so use_gpe=true is not feasible "
+            f"(WRN_NOT_FEASIBLE, additional code 0x28: {NOT_FEASIBLE_CODES[0x28]}). Command not sent."
+        )
+    return None
+
+
 def validate_motion(
     gripper_id: str,
     read_mm: Callable[[str], float | None],
@@ -304,6 +314,8 @@ def format_gripper_status(
         active_conditions.append(f"WARNING: {warning_description or 'unknown'}")
         if additional_description:
             active_conditions.append(f"NOT_FEASIBLE reason: {additional_description}")
+    elif status["not_feasible"]:
+        active_conditions.append("Last command not feasible")
     if status["workpiece_lost"]:
         active_conditions.append("Workpiece lost during hold")
     if status["wrong_workpiece_gripped"]:
@@ -312,10 +324,18 @@ def format_gripper_status(
         active_conditions.append("No workpiece detected")
     if status["workpiece_gripped"]:
         active_conditions.append("Workpiece gripped")
+    if status["workpiece_pre_grip_started"]:
+        active_conditions.append("Workpiece pre-grip started")
     if status["position_reached"]:
         active_conditions.append("Position reached")
     if status["software_limit_reached"]:
         active_conditions.append("Software limit reached")
+    if status["grip_force_and_position_maintenance_activated"]:
+        active_conditions.append("GPE activated (grip force and position maintenance)")
+    if status["released_for_manual_movement"]:
+        active_conditions.append("Released for manual movement")
+    if status["ready_for_shutdown"]:
+        active_conditions.append("Ready for shutdown")
     if status["ready_for_operation"]:
         active_conditions.append("Ready for operation")
 
