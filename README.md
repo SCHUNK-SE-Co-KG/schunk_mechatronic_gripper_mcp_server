@@ -6,11 +6,25 @@ MCP Server to control SCHUNK EGU, EGK and EZU grippers
 This MCP server requires:
 
 - Python 3.12 or newer
-- ROS 2
-- The SCHUNK ROS 2 driver and its interface packages
 - A supported SCHUNK EGU, EGK, or EZU gripper
+- Optional: ROS 2 with the SCHUNK ROS 2 driver and its interface packages
 
-Install and build the ROS 2 driver by following the instructions in the
+The server talks to grippers in one of two modes, chosen automatically on the
+first tool call (`get_connection_mode` reports which one is active):
+
+- **ROS 2**: used if the SCHUNK ROS 2 driver is running at `/schunk/driver`.
+- **Ethernet**: otherwise, the server talks to Ethernet grippers directly over
+  HTTP/JSON using `schunk_gripper_library` (pinned to driver release `v3.1.0`).
+  Modbus RTU grippers are not supported in this mode.
+
+The server checks for the ROS 2 driver once, on its first tool call. If ROS 2
+Python packages are available and the driver is detected within three seconds,
+the server uses ROS 2; otherwise it uses direct Ethernet. The selected mode
+does not change until the server is restarted. In ROS 2 mode, each gripper's
+connection settings select its interface: `host` and `port` for Ethernet, or
+`serial_port` and `device_id` for Modbus RTU.
+
+For ROS 2 mode, install and build the ROS 2 driver by following the instructions in the
 [SCHUNK mechatronic gripper ROS 2 driver repository](https://github.com/SCHUNK-SE-Co-KG/schunk_mechatronic_gripper).
 
 After installing the driver, make sure its ROS 2 workspace has been built and
@@ -31,9 +45,40 @@ python -m pip install --upgrade pip
 python -m pip install .
 ```
 
-The package installs the `mcp[cli]` dependency declared in `pyproject.toml`.
+The package installs the dependencies declared in `pyproject.toml`, including
+`schunk_gripper_library` directly from the driver's GitHub repository (`git`
+and network access are required during installation).
 ROS 2 Python packages such as `rclpy` are provided by ROS 2 and must be
 installed through the ROS 2 setup described in the driver repository.
+
+Install from a shell where the ROS 2 driver workspace is **not** sourced.
+Otherwise pip finds the workspace's copy of `schunk_gripper_library` on
+`PYTHONPATH` and skips installing it into the virtual environment, which
+breaks Ethernet mode when the server later runs without ROS 2.
+
+## Ethernet Only mode (without ROS 2)
+
+To use Ethernet Only mode, start the server without sourcing ROS 2 and make
+sure no ROS 2 driver is available at `/schunk/driver`:
+
+```bash
+.venv/bin/schunk-gripper-mcp-server
+```
+
+In this mode, add grippers with their `host` and `port`. `serial_port` and
+`device_id` are for Modbus RTU and are not supported.
+
+The same setup tools are used in both modes: scan or add grippers. With the ROS 2 driver, continue with
+`configure_driver` and `activate_driver`. In Ethernet mode, grippers connect when added, so control
+tools can be used right away. Nothing is scanned or
+loaded automatically on startup. In Ethernet mode, `save_configuration`
+defaults to `configuration.json` in the per-user configuration directory:
+`~/.config/schunk-gripper-mcp-server/` on Linux (or under `$XDG_CONFIG_HOME`),
+and `%APPDATA%\schunk-gripper-mcp-server\` on Windows. This is separate from
+the ROS driver's `/var/tmp/schunk_gripper/configuration.json`. You can pass a file
+path with `save_configuration(location="/path/to/grippers.json")`; the MCP
+server remembers that path for `load_previous_configuration` after restart.
+Pass a location to `load_previous_configuration` to load a different file once.
 
 ## Setup and startup
 
