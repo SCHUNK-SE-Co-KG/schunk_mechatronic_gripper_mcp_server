@@ -182,8 +182,9 @@ def parse_diagnosis_code(code: str) -> int | None:
 
 
 def decode_float_payload(payload: str) -> float | None:
-    """Best-effort decode of a 4-byte hyphenated hex payload (e.g. "00-00-C8-41") as a little-endian float32.
+    """Decode of a 4-byte hyphenated hex payload (e.g. "00-00-C8-41") as a little-endian float32. 
 
+    Return None for invalid input. 
     Modbus RTU parameter values are little-endian per the SCHUNK commissioning
     manual (only Modbus protocol data such as register addresses/counts is
     big-endian), e.g. "00-00-C8-41" -> 25.0 for max_grp_vel.

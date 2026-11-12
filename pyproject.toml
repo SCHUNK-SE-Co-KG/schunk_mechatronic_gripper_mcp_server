@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
     "mcp[cli]>=1.0.0",
+    "platformdirs>=4.14.0",
     "schunk_gripper_library @ git+https://github.com/SCHUNK-SE-Co-KG/schunk_mechatronic_gripper.git@v3.1.0#subdirectory=schunk_gripper_library",
     # schunk_gripper_library.utility imports pytest at runtime without declaring it.
     "pytest",

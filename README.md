@@ -72,8 +72,10 @@ The same setup tools are used in both modes: scan or add grippers. With the ROS 
 `configure_driver` and `activate_driver`. In Ethernet mode, grippers connect when added, so control
 tools can be used right away. Nothing is scanned or
 loaded automatically on startup. In Ethernet mode, `save_configuration`
-defaults to `configuration.json` in the MCP server folder, separate from the
-ROS driver's `/var/tmp/schunk_gripper/configuration.json`. You can pass a file
+defaults to `configuration.json` in the per-user configuration directory:
+`~/.config/schunk-gripper-mcp-server/` on Linux (or under `$XDG_CONFIG_HOME`),
+and `%APPDATA%\schunk-gripper-mcp-server\` on Windows. This is separate from
+the ROS driver's `/var/tmp/schunk_gripper/configuration.json`. You can pass a file
 path with `save_configuration(location="/path/to/grippers.json")`; the MCP
 server remembers that path for `load_previous_configuration` after restart.
 Pass a location to `load_previous_configuration` to load a different file once.

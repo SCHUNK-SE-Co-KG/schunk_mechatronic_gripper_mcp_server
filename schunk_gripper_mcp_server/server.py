@@ -351,9 +351,10 @@ async def save_configuration(location: str = "") -> str:
     """Save the current gripper configuration to disk.
 
     In Ethernet mode, location is an optional file path. The default is
-    configuration.json beside the MCP server. A custom path is remembered and
-    used by load_previous_configuration on later server starts. ROS mode uses
-    the ROS driver's own configuration location; location is not supported there.
+    configuration.json in the user's application configuration directory. A
+    custom path is remembered and used by load_previous_configuration on later
+    server starts. ROS mode uses the ROS driver's own configuration location;
+    location is not supported there.
 
     Args:
         location: Optional path for the Ethernet configuration JSON file.
@@ -373,9 +374,9 @@ async def load_previous_configuration(location: str = "") -> str:
     """Load a previously saved gripper configuration from disk.
 
     In Ethernet mode, location is optional. If omitted, loads the path saved
-    most recently by save_configuration, or configuration.json beside the MCP
-    server if no custom path has been saved. ROS mode loads the ROS driver's
-    own configuration and does not accept location.
+    most recently by save_configuration, or configuration.json in the user's
+    application configuration directory. ROS mode loads the ROS driver's own
+    configuration and does not accept location.
 
     Args:
         location: Optional Ethernet configuration JSON file to load once.
