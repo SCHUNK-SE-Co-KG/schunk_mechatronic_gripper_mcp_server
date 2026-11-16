@@ -38,7 +38,7 @@ def resolve_configuration_path(location: str = "") -> Path:
 
 
 def save_configuration_data(configuration: list[dict[str, Any]], location: str = "") -> str:
-    path = resolve_configuration_path(location)
+    path = Path(location).expanduser().resolve() if location else DEFAULT_CONFIGURATION_PATH
     CONFIGURATION_DIRECTORY.mkdir(parents=True, exist_ok=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(configuration, indent=2), encoding="utf-8")
