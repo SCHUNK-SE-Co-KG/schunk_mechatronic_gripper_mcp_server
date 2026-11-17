@@ -20,8 +20,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mcp.server.fastmcp import FastMCP
-from mcp.types import TextResourceContents
+from mcp.server.mcpserver import MCPServer
 
 if TYPE_CHECKING:
     from schunk_gripper_mcp_server.ethernet_bridge import EthernetBridge
@@ -114,7 +113,7 @@ _MEMORY_PATH = Path(__file__).with_name("agent_memory.md")
 if _MEMORY_PATH.is_file():
     INSTRUCTIONS = _MEMORY_PATH.read_text(encoding="utf-8")
 
-mcp = FastMCP(
+mcp = MCPServer(
     "Schunk Gripper MCP Server",
     instructions=INSTRUCTIONS,
 )
@@ -124,8 +123,11 @@ mcp = FastMCP(
 # Resource: Gripper Firmware Documentation
 # ---------------------------------------------------------------------------
 
-@mcp.resource("gripper://documentation/schunk-firmware-5.3.1")
-def get_gripper_documentation() -> TextResourceContents:
+@mcp.resource(
+    "gripper://documentation/schunk-firmware-5.3.1",
+    mime_type="text/markdown",
+)
+def get_gripper_documentation() -> str:
     """SCHUNK EGU/EGK/EZU Gripper Firmware Reference (5.3.1).
 
     Comprehensive documentation covering:
@@ -143,13 +145,8 @@ def get_gripper_documentation() -> TextResourceContents:
     """
     memory_path = Path(__file__).with_name("agent_memory.md")
     if memory_path.is_file():
-        return TextResourceContents(uri="gripper://documentation/schunk-firmware-5.3.1", text=memory_path.read_text(encoding="utf-8"))
-    else:
-        # Fallback if agent_memory.md doesn't exist
-        return TextResourceContents(
-            uri="gripper://documentation/schunk-firmware-5.3.1",
-            text="SCHUNK Gripper documentation not available. Please ensure agent_memory.md is present."
-        )
+        return memory_path.read_text(encoding="utf-8")
+    return "SCHUNK Gripper documentation not available. Please ensure agent_memory.md is present."
 
 
 bridge: "RosBridge | EthernetBridge | None" = None
